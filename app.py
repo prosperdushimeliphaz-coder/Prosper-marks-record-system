@@ -1,133 +1,151 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
-from datetime import date
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import landscape, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from datetime import datetime
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils.dataframe import dataframe_to_rows
+from fpdf import FPDF
 
-st.set_page_config(page_title="Prosper Marks Register", layout="wide")
+# --------------------------
+# PAGE CONFIG
+# --------------------------
+st.set_page_config(page_title="Student Marks Manager", layout="centered")
+st.title("📘 Student Marks Record App")
 
-st.title("📘 Student Marks Register")
+# --------------------------
+# USER INPUT SECTION
+# --------------------------
+st.subheader("Enter School & Class Information")
 
-uploaded_file = st.file_uploader("📂 Upload Excel file", type=["xlsx"])
+col1, col2 = st.columns(2)
+with col1:
+    school_name = st.text_input("School Name", "Example Secondary School")
+    district = st.text_input("District", "Kigali")
+with col2:
+    subject = st.text_input("Subject", "Biology")
+    teacher = st.text_input("Teacher Name", "Mr. Prosper")
 
-if uploaded_file:
-    # Read Excel
-    xls = pd.ExcelFile(uploaded_file)
-    sheet_names = xls.sheet_names
+# Dropdown of available classes
+classes = ["S1A", "S1B", "S2A", "S2B", "S3A", "S3B"]
+selected_class = st.selectbox("Select Class", classes)
 
-    # Select Class
-    selected_class = st.selectbox("🏫 Select Class", sheet_names)
-    df = pd.read_excel(xls, sheet_name=selected_class)
+num_students = st.number_input("Number of Students", min_value=1, step=1, value=5)
 
-    # Detect name column
-    if "Name" in df.columns:
-        names = df["Name"].dropna().tolist()
-    else:
-        names = df.iloc[:, 0].dropna().tolist()  # assume first column
+# --------------------------
+# MULTIPLE TEST ENTRY
+# --------------------------
+st.subheader("🧮 Enter Test Details")
 
-    st.success(f"✅ Loaded class: {selected_class} with {len(names)} students.")
+num_tests = st.number_input("Number of Tests", min_value=1, step=1, value=1)
+tests = []
 
-    # Basic info
-    st.subheader("School Information")
-    col1, col2 = st.columns(2)
-    with col1:
-        district = st.text_input("District:")
-        school = st.text_input("School:")
-    with col2:
-        teacher_name = st.text_input("Teacher’s Name:")
-        subject_name = st.text_input("Subject Name:")
+for t in range(num_tests):
+    st.markdown(f"### Test {t+1}")
+    test_name = st.text_input(f"Name for Test {t+1}", f"Test {t+1}")
+    test_date = st.date_input(f"Date for {test_name}", datetime.today())
+    max_marks = st.number_input(f"Maximum Marks for {test_name}", min_value=1, max_value=100, value=100, key=f"max_{t}")
+    marks = []
+    for i in range(1, num_students + 1):
+        marks.append(st.number_input(f"Student {i} - {test_name}", min_value=0, max_value=max_marks, step=1, value=0, key=f"{t}_{i}"))
+    tests.append({
+        "name": test_name,
+        "date": test_date,
+        "max": max_marks,
+        "marks": marks
+    })
 
-    # Test setup
-    st.subheader("Tests Setup")
-    num_tests = st.number_input("Number of Tests:", min_value=1, max_value=10, value=1)
-    test_dates, test_max = [], []
+# --------------------------
+# SAVE ALL TESTS TO EXCEL
+# --------------------------
+if st.button("💾 Save / Update Marks"):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = selected_class
 
-    for i in range(num_tests):
-        c1, c2 = st.columns(2)
-        with c1:
-            t_date = st.date_input(f"Date of Test {i+1}", value=date.today())
-        with c2:
-            max_mark = st.number_input(f"Max marks for Test {i+1}", min_value=1, value=20)
-        test_dates.append(str(t_date))
-        test_max.append(max_mark)
+    # Headers
+    ws.merge_cells('A1:D1')
+    ws['A1'] = "MARKS RECORD"
+    ws['A1'].font = Font(bold=True, size=14)
+    ws['A1'].alignment = Alignment(horizontal="center")
 
-    # Enter marks
-    st.subheader("✏️ Enter Marks for Each Student")
-    marks_data = {}
-    for i, name in enumerate(names):
-        st.markdown(f"**{i+1}. {name}**")
-        scores = []
-        for j in range(num_tests):
-            score = st.number_input(
-                f"{name} - Test {j+1}",
-                min_value=0,
-                max_value=test_max[j],
-                value=0,
-                key=f"{i}_{j}"
-            )
-            scores.append(score)
-        marks_data[name] = scores
+    ws.merge_cells('A2:D2')
+    ws['A2'] = f"{school_name} | {district} | Class: {selected_class} | Subject: {subject} | Teacher: {teacher}"
+    ws['A2'].alignment = Alignment(horizontal="center")
 
-    if st.button("💾 Save / Update Marks"):
-        # Prepare data
-        headers = ["Student Name"] + [f"Test {i+1}" for i in range(num_tests)] + ["Total", "Average (%)"]
-        table_data = [headers]
+    start_row = 4
+    for t, test in enumerate(tests):
+        ws.cell(row=start_row, column=1, value=f"{test['name']} - {test['date'].strftime('%d/%m/%Y')} - Max: {test['max']}")
+        ws.cell(row=start_row, column=1).font = Font(bold=True)
+        start_row += 1
 
-        for name, scores in marks_data.items():
-            total = sum(scores)
-            average = round((total / sum(test_max)) * 100, 2)
-            table_data.append([name] + scores + [total, average])
+        df = pd.DataFrame({
+            "Student No.": range(1, num_students + 1),
+            "Marks": test["marks"]
+        })
+        df["Rank"] = df["Marks"].rank(ascending=False, method='min').astype(int)
 
-        df_report = pd.DataFrame(table_data[1:], columns=table_data[0])
-        st.success("✅ Marks updated successfully!")
-        st.dataframe(df_report, use_container_width=True)
+        for r in dataframe_to_rows(df, index=False, header=True):
+            ws.append(r)
+        start_row = ws.max_row + 2
 
-        # --- PDF GENERATION ---
-        pdf_buffer = BytesIO()
-        doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape(A4))
-        styles = getSampleStyleSheet()
-        elements = []
+    # Adjust width
+    for col in ws.columns:
+        max_len = max(len(str(cell.value)) for cell in col if cell.value)
+        ws.column_dimensions[col[0].column_letter].width = max_len + 3
 
-        # Header info
-        header = f"""
-        <b>{school}</b> — <b>{selected_class}</b><br/>
-        District: {district}<br/>
-        <b>Subject:</b> {subject_name} | <b>Teacher:</b> {teacher_name}
-        """
-        elements.append(Paragraph(header, styles["Title"]))
-        elements.append(Spacer(1, 12))
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    st.success("✅ Marks and test dates saved successfully!")
 
-        # Table
-        t = Table(table_data, repeatRows=1)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ]))
-        elements.append(t)
-        doc.build(elements)
+    st.download_button(
+        label="⬇️ Download Excel Report",
+        data=buffer,
+        file_name=f"{selected_class}_{subject}_AllTests.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-        st.download_button(
-            "📄 Download PDF Report",
-            data=pdf_buffer.getvalue(),
-            file_name=f"{selected_class}_{subject_name}_Report.pdf",
-            mime="application/pdf"
-        )
+# --------------------------
+# PDF REPORT (All Tests)
+# --------------------------
+if st.button("📄 Generate PDF Report"):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "MARKS RECORD", 0, 1, "C")
 
-        # --- Excel output ---
-        excel_buffer = BytesIO()
-        df_report.to_excel(excel_buffer, index=False)
-        st.download_button(
-            "📊 Download Excel Report",
-            data=excel_buffer.getvalue(),
-            file_name=f"{selected_class}_{subject_name}_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    pdf.set_font("Arial", size=11)
+    pdf.multi_cell(0, 8, f"{school_name}\nDistrict: {district}\nClass: {selected_class}\nSubject: {subject}\nTeacher: {teacher}", 0, "L")
+    pdf.ln(5)
+
+    for t, test in enumerate(tests):
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, f"{test['name']} — {test['date'].strftime('%d/%m/%Y')} — Max: {test['max']}", 0, 1)
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(40, 10, "Student No.", 1, 0, "C")
+        pdf.cell(40, 10, "Marks", 1, 0, "C")
+        pdf.cell(40, 10, "Rank", 1, 1, "C")
+
+        pdf.set_font("Arial", size=11)
+        df = pd.DataFrame({
+            "Student No.": range(1, num_students + 1),
+            "Marks": test["marks"]
+        })
+        df["Rank"] = df["Marks"].rank(ascending=False, method='min').astype(int)
+        for i, row in df.iterrows():
+            pdf.cell(40, 10, str(row["Student No."]), 1, 0, "C")
+            pdf.cell(40, 10, str(row["Marks"]), 1, 0, "C")
+            pdf.cell(40, 10, str(row["Rank"]), 1, 1, "C")
+        pdf.ln(5)
+
+    pdf_buffer = io.BytesIO()
+    pdf.output(pdf_buffer)
+    pdf_buffer.seek(0)
+
+    st.download_button(
+        label="⬇️ Download PDF Report",
+        data=pdf_buffer,
+        file_name=f"{selected_class}_{subject}_AllTests.pdf",
+        mime="application/pdf"
+    )
