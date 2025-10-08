@@ -14,9 +14,12 @@ uploaded_file = st.file_uploader("📂 Upload the class Excel workbook", type=["
 
 if uploaded_file:
     workbook = pd.ExcelFile(uploaded_file)
+    
+    # Let user choose the class (sheet)
     sheet_name = st.selectbox("Select the class (sheet)", workbook.sheet_names)
-
-    df = workbook.parse(sheet_name)
+    
+    # 👇 Parse the sheet that the user selected (not default one)
+    df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
 
     if "Name" not in df.columns:
         st.error("❌ 'Name' column not found in your Excel file. Please ensure one column has student names.")
@@ -38,7 +41,7 @@ if uploaded_file:
         for name in names:
             scores[name] = []
             for i in range(test_count):
-                score = st.number_input(f"{name} - Test {i+1}", min_value=0, max_value=int(max_mark), key=f"{name}_{i}")
+                score = st.number_input(f"{name} - Test {i+1}", min_value=0, max_value=int(max_mark), key=f"{sheet_name}_{name}_{i}")
                 scores[name].append(score)
 
         if st.button("💾 Generate Excel File"):
@@ -73,7 +76,7 @@ if uploaded_file:
                 new_df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=len(header_info) + 2)
             output.seek(0)
 
-            st.success("✅ Marks file generated successfully!")
+            st.success(f"✅ Marks file for class {sheet_name} generated successfully!")
             st.download_button(
                 label="⬇️ Download Updated Workbook",
                 data=output,
