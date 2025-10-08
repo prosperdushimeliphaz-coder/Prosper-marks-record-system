@@ -1,86 +1,82 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 from io import BytesIO
+from datetime import date
 
-st.set_page_config(page_title="Marks Recorder", page_icon="🧮", layout="wide")
+st.set_page_config(page_title="Student Marks Recorder", layout="wide")
 
 st.title("📘 Student Marks Recorder")
-st.markdown("Enter marks for each student, then download the updated workbook with test details and totals.")
 
-# -----------------------------
-# File uploader
-# -----------------------------
+st.write("Enter marks for each student, then download the updated workbook with test details and totals.")
+
+# Upload Excel workbook
 uploaded_file = st.file_uploader("📂 Upload the class Excel workbook", type=["xlsx"])
 
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file)
+if uploaded_file:
+    workbook = pd.ExcelFile(uploaded_file)
+    sheet_name = st.selectbox("Select the class (sheet)", workbook.sheet_names)
 
-    # --- Detect the column for student names automatically ---
-    name_col = None
-    for possible in ["Names", "Name", "names", "Student Name", "student_name"]:
-        if possible in df.columns:
-            name_col = possible
-            break
+    df = workbook.parse(sheet_name)
 
-    if not name_col:
+    if "Name" not in df.columns:
         st.error("❌ 'Name' column not found in your Excel file. Please ensure one column has student names.")
-        st.stop()
+    else:
+        # User inputs
+        district = st.text_input("District")
+        sector = st.text_input("Sector")
+        school = st.text_input("School")
+        academic_year = st.text_input("Academic Year (e.g. 2025-2026)")
+        term = st.selectbox("Term", ["Term I", "Term II", "Term III"])
+        test_count = st.number_input("Number of tests", min_value=1, max_value=10, step=1)
+        max_mark = st.number_input("Maximum marks for each test", min_value=1, max_value=100, value=40)
+        test_date = st.date_input("Date of the test", value=date.today())
 
-    # --- Show detected column ---
-    st.success(f"✅ Using column **{name_col}** for student names.")
+        st.markdown("### ✏️ Enter Scores for Each Student")
+        names = df["Name"].tolist()
+        scores = {}
 
-    # --- Let user select class or sheet ---
-    st.markdown("### 🧑‍🏫 Select Class or Section")
-    class_name = st.text_input("Enter class name (e.g. S1 Biology)", "")
+        for name in names:
+            scores[name] = []
+            for i in range(test_count):
+                score = st.number_input(f"{name} - Test {i+1}", min_value=0, max_value=int(max_mark), key=f"{name}_{i}")
+                scores[name].append(score)
 
-    # --- Date for this record ---
-    record_date = st.date_input("📅 Date", date.today())
+        if st.button("💾 Generate Excel File"):
+            new_df = df.copy()
 
-    # --- Input scores ---
-    st.markdown("## ✏️ Enter Scores for Each Student")
+            # Add test columns
+            for i in range(test_count):
+                new_df[f"Test {i+1}"] = [scores[n][i] for n in names]
 
-    test_cols = ["Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
-    max_marks = st.number_input("Maximum marks per test", 1, 100, 20)
+            # Add total and percentage
+            new_df["Total"] = new_df[[f"Test {i+1}" for i in range(test_count)]].sum(axis=1)
+            new_df["% (out of 100)"] = (new_df["Total"] / (test_count * max_mark)) * 100
 
-    # Create an empty dataframe to store marks
-    marks_data = {name_col: df[name_col].tolist()}
+            # Add headers (date, max marks, etc.)
+            header_info = pd.DataFrame({
+                "": [
+                    f"District: {district}",
+                    f"Sector: {sector}",
+                    f"School: {school}",
+                    f"Class: {sheet_name}",
+                    f"Academic Year: {academic_year}",
+                    f"Term: {term}",
+                    f"Test Date: {test_date}",
+                    f"Maximum Marks per Test: {max_mark}"
+                ]
+            })
 
-    for test in test_cols:
-        marks_data[test] = [0] * len(df)
+            # Combine info + table
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                header_info.to_excel(writer, sheet_name=sheet_name, index=False, header=False, startrow=0)
+                new_df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=len(header_info) + 2)
+            output.seek(0)
 
-    marks_df = pd.DataFrame(marks_data)
-
-    for i, row in df.iterrows():
-        name = row[name_col]
-        st.markdown(f"### 👤 {name}")
-        for test in test_cols:
-            marks_df.loc[i, test] = st.number_input(f"{test} score for {name}", 0, max_marks, 0, key=f"{name}_{test}")
-
-    # --- Compute totals and percentage ---
-    marks_df["Total (/Max)"] = marks_df[test_cols].sum(axis=1).astype(int).astype(str) + f" / {max_marks*5}"
-    marks_df["Total (/100)"] = round((marks_df[test_cols].sum(axis=1) / (max_marks * 5)) * 100, 2)
-
-    # --- Add class info and date ---
-    marks_df["Class"] = class_name
-    marks_df["Record Date"] = record_date
-    marks_df["Year"] = record_date.year
-
-    st.markdown("### ✅ Preview of recorded marks")
-    st.dataframe(marks_df)
-
-    # --- Download updated Excel ---
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        marks_df.to_excel(writer, index=False, sheet_name="Marks")
-    processed_data = output.getvalue()
-
-    st.download_button(
-        label="📥 Download Updated Workbook",
-        data=processed_data,
-        file_name=f"{class_name}_marks_{record_date}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-else:
-    st.info("👆 Please upload a workbook to begin.")
+            st.success("✅ Marks file generated successfully!")
+            st.download_button(
+                label="⬇️ Download Updated Workbook",
+                data=output,
+                file_name=f"{sheet_name}_Marks_Record.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
