@@ -1,129 +1,101 @@
 import streamlit as st
 import pandas as pd
+import datetime
 from io import BytesIO
-from fpdf import FPDF
 
-st.set_page_config(page_title="Prosper Marks Record", layout="wide")
+st.set_page_config(page_title="Prosper Marks Manager Pro", layout="wide")
 
-st.title("📘 Prosper Marks Record App")
+st.title("📘 Prosper Marks Manager Pro")
 
-# ---- SCHOOL INFO SECTION ----
-st.subheader("School Information")
-col1, col2, col3 = st.columns(3)
-with col1:
-    school = st.text_input("School Name", "")
-    district = st.text_input("District", "")
-with col2:
-    level = st.text_input("Level", "")
-    term = st.text_input("Term", "")
-with col3:
-    subject = st.text_input("Subject", "")
-    teacher = st.text_input("Teacher Name", "")
+# --- Header Information ---
+st.subheader("School Marks Management Portal")
+school_name = st.text_input("School Name", "Bright Future School")
+subject = st.text_input("Subject", "Biology")
+teacher = st.text_input("Teacher", "Mr. Prosper Dushimirimana")
+term = st.selectbox("Term", ["Term 1", "Term 2", "Term 3"])
+class_selected = st.selectbox("Select Class", ["Senior 1", "Senior 2", "Senior 3", "Senior 4", "Senior 5", "Senior 6"])
 
-st.markdown("---")
+st.divider()
 
-# ---- CLASS SELECTION ----
-st.subheader("Select Class and Upload Workbook")
-class_list = ["S1A", "S1B", "S2A", "S2B", "S3A", "S3B"]
-selected_class = st.selectbox("Select Class", class_list)
+# --- Student Names Upload ---
+uploaded_file = st.file_uploader("📎 Upload Excel File of Students (with a column 'Name')", type=["xlsx"])
 
-uploaded_file = st.file_uploader("Upload Excel Workbook", type=["xlsx"])
-
-# ---- PROCESS WORKBOOK ----
 if uploaded_file:
-    try:
-        df = pd.read_excel(uploaded_file, sheet_name=selected_class)
-        df.columns = df.columns.str.strip()
-        st.success(f"Workbook loaded successfully from class: {selected_class}")
+    df = pd.read_excel(uploaded_file)
+    if "Name" not in df.columns:
+        st.error("The Excel file must contain a 'Name' column.")
+    else:
+        st.success(f"Loaded {len(df)} student names successfully!")
 
-        st.subheader("📋 Marks Record")
-        st.write("Enter test names and dates:")
+        # --- Test Information ---
+        date_today = st.date_input("Date of Test", datetime.date.today())
+        max_marks = st.number_input("Max Marks for Test 1", min_value=1, value=30)
+        st.divider()
 
-        num_tests = st.number_input("How many tests?", min_value=1, step=1)
-        test_names, test_dates, max_marks = [], [], []
-
-        for i in range(num_tests):
-            cols = st.columns(3)
-            with cols[0]:
-                test_name = st.text_input(f"Test {i+1} Name", key=f"name_{i}")
-            with cols[1]:
-                test_date = st.date_input(f"Date for Test {i+1}", key=f"date_{i}")
-            with cols[2]:
-                max_mark = st.number_input(f"Max Marks for {test_name or f'Test {i+1}'}", min_value=1, step=1, key=f"max_{i}")
-
-            test_names.append(test_name)
-            test_dates.append(test_date)
-            max_marks.append(max_mark)
-
-        # Create marks entry table
-        st.write("---")
+        # --- Enter Marks ---
         st.subheader("Enter Marks for Each Student")
+        default_mark = st.number_input("Enter marks for all (can adjust later in Excel):", min_value=0, max_value=max_marks, value=0)
+        df["Test 1"] = default_mark
+        df["Total"] = df["Test 1"]
+        df["Rank"] = df["Total"].rank(ascending=False, method="min").astype(int)
 
-        if "Name" not in df.columns:
-            st.error("No 'Name' column found in the sheet! Please fix your Excel file.")
-        else:
-            for test_name in test_names:
-                df[test_name] = st.number_input(
-                    f"Enter marks for {test_name} (applied equally or adjust later in Excel):",
-                    min_value=0,
-                    max_value=100,
-                    step=1,
-                    key=f"marks_{test_name}"
-                )
+        # --- Display Marks Table ---
+        st.subheader("Marks Record Table")
+        st.dataframe(df.style.hide(axis="index"))
 
-            # Calculate total and rank
-            df["Total"] = df[test_names].sum(axis=1)
-            df["Rank"] = df["Total"].rank(ascending=False, method='min').astype(int)
+        # --- Save File per Class ---
+        filename = f"{class_selected.replace(' ', '_')}_marks.xlsx"
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Marks")
+        st.download_button(
+            label="⬇️ Download Excel File",
+            data=buffer.getvalue(),
+            file_name=filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
-            st.write("### Marks Record Table")
-            st.dataframe(df, use_container_width=True)
+        # --- PDF Export ---
+        pdf_name = f"{class_selected.replace(' ', '_')}_report.pdf"
+        pdf_buffer = BytesIO()
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
 
-            # ---- EXPORT SECTION ----
-            st.write("---")
-            st.subheader("📤 Export Options")
+        doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph(f"<b>{school_name}</b>", styles['Title']))
+        elements.append(Paragraph(f"Subject: {subject} | Class: {class_selected} | Teacher: {teacher}", styles['Heading3']))
+        elements.append(Paragraph(f"Date: {date_today} | Term: {term}", styles['Normal']))
+        elements.append(Spacer(1, 12))
 
-            def convert_df_to_excel(dataframe):
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    dataframe.to_excel(writer, index=False, sheet_name="Marks Record")
-                return output.getvalue()
+        table_data = [df.columns.tolist()] + df.values.tolist()
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+        ]))
+        elements.append(table)
+        doc.build(elements)
 
-            excel_data = convert_df_to_excel(df)
+        st.download_button(
+            label="📄 Download PDF Report",
+            data=pdf_buffer.getvalue(),
+            file_name=pdf_name,
+            mime="application/pdf",
+        )
 
-            # --- Excel Export ---
-            st.download_button(
-                label="⬇️ Download Excel Report",
-                data=excel_data,
-                file_name=f"{school}_{subject}_{selected_class}_Marks.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # --- Auto-save data ---
+        if "saved_data" not in st.session_state:
+            st.session_state["saved_data"] = {}
+        st.session_state["saved_data"][class_selected] = df
+        st.success(f"✅ Data auto-saved for {class_selected}")
 
-            # --- PDF Export ---
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", "B", 14)
-            pdf.cell(200, 10, f"{school} - {district}", ln=True, align="C")
-            pdf.cell(200, 10, f"Subject: {subject} | Class: {selected_class}", ln=True, align="C")
-            pdf.cell(200, 10, f"Teacher: {teacher} | Term: {term} | Level: {level}", ln=True, align="C")
-            pdf.ln(10)
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(200, 10, "Marks Record", ln=True, align="C")
-            pdf.ln(5)
-
-            pdf.set_font("Arial", size=10)
-            for i, row in df.iterrows():
-                line = ", ".join([f"{col}: {row[col]}" for col in df.columns])
-                pdf.multi_cell(0, 8, line)
-
-            pdf_output = BytesIO(pdf.output(dest="S").encode("latin1"))
-            st.download_button(
-                label="📄 Download PDF Report",
-                data=pdf_output,
-                file_name=f"{school}_{subject}_{selected_class}_Marks.pdf",
-                mime="application/pdf"
-            )
-
-    except Exception as e:
-        st.error(f"Error processing file: {e}")
 else:
-    st.info("Please upload a workbook to get started.")
+    st.info("Please upload an Excel file containing a column named 'Name'.")
