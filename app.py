@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import io
 from fpdf import FPDF
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from datetime import date
+import os
 
 st.set_page_config(page_title="Prosper Marks Recorder", layout="wide")
 
@@ -51,25 +52,53 @@ else:
     st.stop()
 
 # ---- Calculate Totals and Ranks ----
-df["Total"] = df.select_dtypes(include=['number']).sum(axis=1)
+numeric_cols = df.select_dtypes(include=['number']).columns
+df["Total"] = df[numeric_cols].sum(axis=1)
 df["Rank"] = df["Total"].rank(ascending=False, method="min").astype(int)
 
 st.subheader("Marks Record Table")
 st.dataframe(df)
 
-# ---- Save or Download Reports ----
-st.subheader("Save or Download Reports")
+# ---- Save/Update Workbook Button ----
+st.subheader("💾 Save or Download Reports")
 
+save_buffer = io.BytesIO()
+
+def update_workbook(existing_file, new_data, sheet_name):
+    if os.path.exists(existing_file):
+        wb = load_workbook(existing_file)
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            for r in dataframe_to_rows(new_data, index=False, header=True):
+                ws.append(r)
+        else:
+            ws = wb.create_sheet(sheet_name)
+            for r in dataframe_to_rows(new_data, index=False, header=True):
+                ws.append(r)
+        wb.save(existing_file)
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_name
+        for r in dataframe_to_rows(new_data, index=False, header=True):
+            ws.append(r)
+        wb.save(existing_file)
+
+if st.button("💾 Save / Update Workbook (Add Test)"):
+    with pd.ExcelWriter(save_buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=_class)
+    st.success("✅ Test results added to workbook successfully!")
+
+# ---- Generate Excel for download ----
 buffer = io.BytesIO()
 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
     df.to_excel(writer, index=False, sheet_name="Marks_Record")
 excel_data = buffer.getvalue()
 
-# ---- PDF Report ----
+# ---- Generate PDF ----
 pdf = FPDF()
 pdf.add_page()
 
-# Header
 pdf.set_font("Arial", "B", 16)
 pdf.cell(200, 10, f"MARKS REPORT - {_class}", ln=True, align="C")
 pdf.ln(4)
@@ -84,21 +113,18 @@ pdf.cell(200, 8, f"Date: {test_date}", ln=True, align="L")
 pdf.cell(200, 8, f"Max Marks: {max_marks}", ln=True, align="L")
 pdf.ln(6)
 
-# Table heading
+# Table
 pdf.set_font("Arial", "B", 11)
 pdf.set_fill_color(220, 220, 220)
 for col in df.columns:
     pdf.cell(38, 10, str(col), border=1, align="C", fill=True)
 pdf.ln()
-
-# Table content
 pdf.set_font("Arial", "", 10)
 for _, row in df.iterrows():
     for col in df.columns:
         pdf.cell(38, 8, str(row[col]), border=1, align="C")
     pdf.ln()
 
-# Summary
 pdf.ln(6)
 pdf.set_font("Arial", "B", 12)
 pdf.cell(200, 8, "Summary:", ln=True)
@@ -109,7 +135,6 @@ if 'Total' in df.columns:
 
 pdf_output = pdf.output(dest='S').encode('latin-1')
 
-# Download Buttons
 col1, col2 = st.columns(2)
 col1.download_button(
     "⬇️ Download Excel Report",
@@ -124,4 +149,4 @@ col2.download_button(
     mime="application/pdf"
 )
 
-st.success("✅ Reports ready! You can enter more tests and update workbook anytime.")
+st.success("✅ You can now save this test and add another later!")
