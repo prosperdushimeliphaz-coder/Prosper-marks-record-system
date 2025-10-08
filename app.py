@@ -1,138 +1,113 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from io import BytesIO
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+import io
+from fpdf import FPDF
 
-st.set_page_config(page_title="Prosper Marks Record", layout="centered")
-st.title("📘 Student Marks Record System")
+st.set_page_config(page_title="Marks Management", layout="wide")
 
-# =====================
-# 1️⃣  SCHOOL INFO
-# =====================
-st.subheader("🏫 School Information")
-district = st.text_input("District")
-school = st.text_input("School")
-teacher = st.text_input("Teacher Name")
-subject = st.text_input("Subject")
-selected_class = st.text_input("Class")
+st.title("📘 Student Marks Management System")
 
-# =====================
-# 2️⃣  UPLOAD STUDENTS
-# =====================
-st.subheader("📂 Upload Student List")
-uploaded_file = st.file_uploader("Upload Excel file with student names", type=["xlsx", "csv"])
-
-if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+# ==============================
+# 1️⃣ Upload workbook
+# ==============================
+uploaded_file = st.file_uploader("Upload Excel workbook containing student list", type=["xlsx"])
+if uploaded_file is not None:
+    df = pd.read_excel(uploaded_file)
+    if 'Name' not in df.columns:
+        st.error("⚠️ The Excel file must contain a column named 'Name'.")
+        st.stop()
 else:
-    st.warning("⚠️ Please upload a student list file to continue.")
+    st.warning("Please upload the Excel file first.")
     st.stop()
 
-# =====================
-# 3️⃣  TEST SETTINGS
-# =====================
-st.subheader("🧾 Test Setup")
-num_tests = st.number_input("Enter number of tests", min_value=1, max_value=20, step=1, value=3)
-test_names, test_dates, max_marks = [], [], []
-
-for i in range(num_tests):
-    st.markdown(f"**Test {i+1} Details:**")
-    t_name = st.text_input(f"Name for Test {i+1}", f"Test {i+1}")
-    t_date = st.date_input(f"Date for {t_name}", date.today(), key=f"date_{i}")
-    t_max = st.number_input(f"Maximum Marks for {t_name}", min_value=1, value=30, step=1, key=f"max_{i}")
-    test_names.append(t_name)
-    test_dates.append(t_date)
-    max_marks.append(t_max)
-    st.markdown("---")
-
-# =====================
-# 4️⃣  ENTER MARKS
-# =====================
-st.subheader("✏️ Enter Marks for Each Student")
-marks_data = []
-for idx, row in df.iterrows():
-    st.markdown(f"### 🧍 {row.iloc[0]}")  # assuming first column is name
-    student_marks = {"Name": row.iloc[0]}
-    for i, test in enumerate(test_names):
-        mark = st.number_input(
-            f"{test} ({test_dates[i]}) - {row.iloc[0]}",
-            min_value=0,
-            max_value=max_marks[i],
-            step=1,
-            key=f"{row.iloc[0]}_{test}"
-        )
-        student_marks[test] = mark
-    marks_data.append(student_marks)
-    st.divider()
-
-marks_df = pd.DataFrame(marks_data)
-
-# =====================
-# 5️⃣  CALCULATE TOTALS & RANKS
-# =====================
-marks_df["Total"] = marks_df[test_names].sum(axis=1)
-marks_df["Rank"] = marks_df["Total"].rank(ascending=False, method="min").astype(int)
+# ==============================
+# 2️⃣ Basic Info Section
+# ==============================
+st.subheader("Class Information")
+col1, col2, col3, col4 = st.columns(4)
+district = col1.text_input("District:")
+school = col2.text_input("School:")
+teacher = col3.text_input("Teacher:")
+_class = col4.selectbox("Class:", ["S1A", "S1B", "S2A", "S2B", "S3A", "S3B", "S4A", "S5A", "S6A"])
 
 st.divider()
-st.subheader("📊 Marks Record Table")
-st.dataframe(marks_df, use_container_width=True)
 
-# =====================
-# 6️⃣  DOWNLOAD EXCEL
-# =====================
-def to_excel(df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Marks Record")
-    return output.getvalue()
+# ==============================
+# 3️⃣ Test Information
+# ==============================
+st.subheader("Enter Test Details")
+test_name = st.text_input("Test Name (e.g. Test 1, Midterm, etc.):")
+test_date = st.date_input("Date for this Test", date.today())
+max_marks = st.number_input("Maximum Marks", min_value=1, max_value=100, value=30)
 
-excel_bytes = to_excel(marks_df)
-st.download_button(
-    "⬇️ Download as Excel",
-    data=excel_bytes,
-    file_name=f"{selected_class}_Marks_Report.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+st.divider()
 
-# =====================
-# 7️⃣  DOWNLOAD PDF
-# =====================
-def to_pdf(df):
-    output = BytesIO()
-    pdf = SimpleDocTemplate(output, pagesize=landscape(A4))
-    elements = []
-    styles = getSampleStyleSheet()
-    elements.append(Paragraph(f"<b>{school} - {subject} ({selected_class})</b>", styles["Title"]))
-    elements.append(Paragraph(f"Teacher: {teacher} | District: {district}", styles["Normal"]))
-    elements.append(Spacer(1, 12))
+# ==============================
+# 4️⃣ Enter Marks
+# ==============================
+st.subheader(f"Enter Marks for Each Student in {test_name}")
+marks = []
+for student in df['Name']:
+    mark = st.number_input(f"{student}", min_value=0, max_value=max_marks, value=0, key=student)
+    marks.append(mark)
 
-    data = [list(df.columns)] + df.values.tolist()
-    table = Table(data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-    ]))
-    elements.append(table)
-    pdf.build(elements)
-    return output.getvalue()
+df[test_name] = marks
 
-pdf_bytes = to_pdf(marks_df)
-st.download_button(
-    "⬇️ Download as PDF",
-    data=pdf_bytes,
-    file_name=f"{selected_class}_Marks_Report.pdf",
-    mime="application/pdf"
-)
+# ==============================
+# 5️⃣ Calculate Total and Rank
+# ==============================
+if 'Total' not in df.columns:
+    df['Total'] = 0
+df['Total'] = df.filter(like="Test").sum(axis=1)
+df['Rank'] = df['Total'].rank(ascending=False, method='min').astype(int)
 
-st.success("✅ All done! Marks report ready for download in both Excel and PDF formats.")
+# ==============================
+# 6️⃣ Save Updates to Excel
+# ==============================
+st.divider()
+st.subheader("Save or Download Reports")
+
+save_button = st.button("💾 Update Workbook (All Tests)")
+if save_button:
+    with pd.ExcelWriter("All_Tests_Record.xlsx", engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=_class)
+    st.success("✅ Workbook updated successfully!")
+
+# ==============================
+# 7️⃣ Download Options
+# ==============================
+excel_buffer = io.BytesIO()
+df.to_excel(excel_buffer, index=False)
+excel_data = excel_buffer.getvalue()
+
+# ---- PDF Report ----
+pdf = FPDF()
+pdf.add_page()
+pdf.set_font("Arial", "B", 14)
+pdf.cell(200, 10, f"Marks Report - {_class}", ln=True, align="C")
+pdf.set_font("Arial", "", 12)
+pdf.cell(200, 10, f"District: {district} | School: {school} | Teacher: {teacher}", ln=True, align="L")
+pdf.cell(200, 10, f"Test: {test_name} | Date: {test_date} | Max Marks: {max_marks}", ln=True, align="L")
+pdf.ln(8)
+
+pdf.set_font("Arial", "B", 11)
+for col in df.columns:
+    pdf.cell(38, 10, str(col), border=1)
+pdf.ln()
+
+pdf.set_font("Arial", "", 10)
+for _, row in df.iterrows():
+    for col in df.columns:
+        pdf.cell(38, 8, str(row[col]), border=1)
+    pdf.ln()
+
+pdf_buffer = io.BytesIO()
+pdf.output(pdf_buffer)
+pdf_data = pdf_buffer.getvalue()
+
+col1, col2 = st.columns(2)
+col1.download_button("⬇️ Download Excel", data=excel_data, file_name="All_Tests_Record.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+col2.download_button("⬇️ Download PDF", data=pdf_data, file_name=f"{_class}_Report.pdf", mime="application/pdf")
+
+st.success("✅ Ready! You can now enter another test later — it will update automatically.")
