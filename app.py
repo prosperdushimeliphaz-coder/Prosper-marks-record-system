@@ -1,179 +1,147 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import os
-from io import BytesIO
-from openpyxl import load_workbook, Workbook
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+import datetime
+import io
+from fpdf import FPDF
 
-# =========================
-# 🔹 APP CONFIG
-# =========================
-st.set_page_config(page_title="Student Marks Recorder", layout="centered")
+st.set_page_config(page_title="Student Marks Record System", layout="wide")
 
-st.title("📘 Student Marks Recorder")
-st.write("Enter test scores, save progress, and later generate full reports (Excel or PDF).")
+st.title("📘 Student Marks Record System")
 
-# =========================
-# 🔹 SECTION 1: HEADER INFO
-# =========================
-st.subheader("🏫 School Information")
-col1, col2 = st.columns(2)
-district = col1.text_input("District")
-school = col2.text_input("School Name")
-col3, col4 = st.columns(2)
-class_name = col3.text_input("Class Name (e.g., S1B)")
-academic_year = col4.text_input("Academic Year (e.g., 2025-2026)")
+# --- Input Section ---
+st.header("School Information")
 
-# =========================
-# 🔹 SECTION 2: FILE UPLOAD
-# =========================
-st.subheader("📁 Upload Class Excel Workbook")
-uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"])
+col1, col2, col3 = st.columns(3)
+with col1:
+    district = st.text_input("District")
+    sector = st.text_input("Sector")
+with col2:
+    school = st.text_input("School")
+    academic_year = st.text_input("Academic Year")
+with col3:
+    class_name = st.text_input("Class")
+    term = st.text_input("Term")
 
-# Temporary storage directory
-SAVE_DIR = "saved_data"
-os.makedirs(SAVE_DIR, exist_ok=True)
-SAVE_PATH = os.path.join(SAVE_DIR, f"{class_name}_marks.xlsx") if class_name else None
+subject = st.text_input("Subject")
+teacher = st.text_input("Teacher’s Name")
 
-# =========================
-# 🔹 SECTION 3: ENTER TEST DETAILS
-# =========================
+st.divider()
+
+# --- Marks Section ---
+st.header("Marks Entry")
+
+uploaded_file = st.file_uploader("Upload Excel file with student names", type=["xlsx"])
+max_marks_subject = st.number_input("Maximum marks for subject", min_value=1, value=40)
+
+num_tests = st.number_input("Number of Tests", min_value=1, max_value=10, value=3)
+
+test_names, test_dates, test_maximums = [], [], []
+for i in range(1, num_tests + 1):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        test_name = st.text_input(f"Name of Test {i}", f"Test {i}")
+    with c2:
+        test_date = st.date_input(f"Date of {test_name}", datetime.date.today())
+    with c3:
+        test_max = st.number_input(f"Max marks for {test_name}", min_value=1, value=20)
+    test_names.append(test_name)
+    test_dates.append(test_date.strftime("%d-%m-%Y"))
+    test_maximums.append(test_max)
+
 if uploaded_file:
-    try:
-        # Read workbook and list sheets
-        excel_data = pd.ExcelFile(uploaded_file)
-        sheet_name = st.selectbox("Select class sheet", excel_data.sheet_names)
-        df = pd.read_excel(excel_data, sheet_name=sheet_name)
+    df_names = pd.read_excel(uploaded_file)
+    student_names = df_names.iloc[:, 0].tolist()
+    marks_data = {}
 
-        if 'Name' not in df.columns:
-            st.error("❌ 'Name' column not found in your Excel file. Please ensure it has a 'Name' header.")
-        else:
-            st.success(f"✅ Loaded {len(df)} students from sheet '{sheet_name}'")
+    st.write("### Enter Marks for Each Test")
 
-            # Select test info
-            test_number = st.selectbox("Select Test Number", ["Test 1", "Test 2", "Test 3", "Test 4", "Test 5"])
-            test_date = st.date_input("Select test date")
-            test_max = st.number_input("Enter maximum marks for this test", min_value=1, max_value=100, value=20)
+    for test in test_names:
+        st.subheader(test)
+        test_marks = []
+        for student in student_names:
+            mark = st.number_input(f"{student} - {test}", min_value=0, value=0, step=1, key=f"{student}_{test}")
+            test_marks.append(mark)
+        marks_data[test] = test_marks
 
-            st.subheader(f"📝 Enter Scores for {test_number}")
-            scores = {}
+    # Prepare DataFrame
+    results_df = pd.DataFrame(marks_data)
+    results_df.insert(0, "Names", student_names)
 
-            for i, row in df.iterrows():
-                name = row["Name"]
-                score = st.number_input(f"{name}", min_value=0.0, max_value=float(test_max), step=1.0, key=f"{test_number}_{i}")
-                scores[name] = score
+    # Add total, percent, rank
+    results_df["Total"] = results_df[test_names].sum(axis=1)
+    results_df["%"] = round((results_df["Total"] / sum(test_maximums)) * 100, 2)
+    results_df["Rank"] = results_df["Total"].rank(ascending=False, method="min").astype(int)
 
-            # =========================
-            # 🔹 SAVE OR UPDATE WORKBOOK
-            # =========================
-            if st.button("💾 Save/Update This Test"):
-                if os.path.exists(SAVE_PATH):
-                    workbook = load_workbook(SAVE_PATH)
-                else:
-                    workbook = Workbook()
-                    workbook.remove(workbook.active)
-                    workbook.create_sheet(sheet_name)
+    # --- Swap rows (Date row on top, Test names row below it) ---
+    dates_row = pd.DataFrame([["Date"] + test_dates + ["", "", ""]], columns=results_df.columns)
+    tests_row = pd.DataFrame([["Test"] + test_names + ["", "", ""]], columns=results_df.columns)
+    results_df = pd.concat([dates_row, tests_row, results_df], ignore_index=True)
 
-                ws = workbook[sheet_name]
+    # Display
+    st.write("### Final Results")
+    st.dataframe(results_df, use_container_width=True)
 
-                # If empty, add headers
-                if ws.max_row == 1 and ws.cell(row=1, column=1).value is None:
-                    headers = ["S/N", "Name"]
-                    ws.append(headers)
-                    for i, name in enumerate(df["Name"], start=1):
-                        ws.append([i, name])
+    # --- Excel Download ---
+    def to_excel(df):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            # Write school info
+            info = [
+                ["District", district],
+                ["Sector", sector],
+                ["School", school],
+                ["Class", class_name],
+                ["Term", term],
+                ["Academic Year", academic_year],
+                ["Subject", subject],
+                ["Teacher", teacher],
+                ["Max Marks (Subject)", max_marks_subject]
+            ]
+            info_df = pd.DataFrame(info, columns=["Field", "Value"])
+            info_df.to_excel(writer, sheet_name="Report", index=False, startrow=0)
+            df.to_excel(writer, sheet_name="Report", index=False, startrow=len(info) + 2)
+        processed_data = output.getvalue()
+        return processed_data
 
-                # Find column index for this test
-                test_col = None
-                for cell in ws[1]:
-                    if cell.value == test_number:
-                        test_col = cell.column
-                        break
-                if not test_col:
-                    ws.cell(row=1, column=ws.max_column + 1, value=test_number)
-                    ws.cell(row=2, column=ws.max_column, value=f"({test_date})")
-                    ws.cell(row=3, column=ws.max_column, value=f"Max: {test_max}")
-                    test_col = ws.max_column
+    excel_data = to_excel(results_df)
+    st.download_button("⬇️ Download Excel Report", data=excel_data,
+                       file_name=f"{subject}_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-                # Fill scores
-                for row_idx in range(4, ws.max_row + 1):
-                    name = ws.cell(row=row_idx, column=2).value
-                    if name in scores:
-                        ws.cell(row=row_idx, column=test_col, value=scores[name])
+    # --- PDF Download ---
+    def generate_pdf(df):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=11)
 
-                workbook.save(SAVE_PATH)
-                st.success(f"✅ {test_number} saved successfully to {SAVE_PATH}")
+        # Header
+        pdf.cell(200, 10, txt=f"STUDENT MARKS REPORT - {subject.upper()}", ln=True, align="C")
+        pdf.ln(5)
 
-            # =========================
-            # 🔹 GENERATE FINAL REPORT
-            # =========================
-            if os.path.exists(SAVE_PATH):
-                if st.button("📊 Generate Full Report"):
-                    wb = load_workbook(SAVE_PATH)
-                    ws = wb[sheet_name]
+        # School Info
+        info_lines = [
+            f"District: {district}",
+            f"Sector: {sector}",
+            f"School: {school}",
+            f"Class: {class_name}",
+            f"Term: {term}",
+            f"Academic Year: {academic_year}",
+            f"Teacher: {teacher}",
+            f"Maximum Marks (Subject): {max_marks_subject}",
+        ]
+        for line in info_lines:
+            pdf.cell(200, 8, txt=line, ln=True)
+        pdf.ln(5)
 
-                    # Find test columns
-                    tests = [cell.value for cell in ws[1] if "Test" in str(cell.value)]
-                    max_marks = []
-                    for c in range(3, ws.max_column + 1):
-                        val = ws.cell(row=3, column=c).value
-                        if val and "Max" in str(val):
-                            max_marks.append(int(val.split(":")[1].strip()))
+        # Table
+        col_width = pdf.w / (len(df.columns) + 1)
+        for i, row in df.iterrows():
+            for value in row:
+                pdf.cell(col_width, 8, txt=str(value), border=0)
+            pdf.ln(8)
 
-                    # Calculate totals and % 
-                    ws.cell(row=1, column=ws.max_column + 1, value="Total")
-                    ws.cell(row=1, column=ws.max_column + 2, value="%")
+        pdf_output = io.BytesIO()
+        pdf.output(pdf_output)
+        return pdf_output.getvalue()
 
-                    for r in range(4, ws.max_row + 1):
-                        marks = [ws.cell(row=r, column=c).value for c in range(3, ws.max_column - 2) if isinstance(ws.cell(row=r, column=c).value, (int, float))]
-                        total = sum(marks)
-                        ws.cell(row=r, column=ws.max_column - 1, value=total)
-                        percent = round((total / sum(max_marks)) * 100, 2) if sum(max_marks) else 0
-                        ws.cell(row=r, column=ws.max_column, value=percent)
-
-                    report_bytes = BytesIO()
-                    wb.save(report_bytes)
-                    report_bytes.seek(0)
-
-                    st.download_button("⬇️ Download Excel Report", data=report_bytes, file_name=f"{class_name}_Final_Report.xlsx", mime="application/vnd.ms-excel")
-
-                    # ---- Generate PDF
-                    pdf_bytes = BytesIO()
-                    c = canvas.Canvas(pdf_bytes, pagesize=A4)
-                    c.setFont("Helvetica-Bold", 14)
-                    c.drawString(200, 800, "STUDENT MARKS REPORT")
-                    c.setFont("Helvetica", 11)
-                    c.drawString(50, 780, f"District: {district}")
-                    c.drawString(50, 765, f"School: {school}")
-                    c.drawString(50, 750, f"Class: {class_name}")
-                    c.drawString(50, 735, f"Academic Year: {academic_year}")
-                    c.drawString(50, 715, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-
-                    c.setFont("Helvetica-Bold", 12)
-                    y = 690
-                    c.drawString(50, y, "Name")
-                    c.drawString(300, y, "Total")
-                    c.drawString(400, y, "%")
-                    c.setFont("Helvetica", 11)
-                    y -= 20
-
-                    for r in range(4, ws.max_row + 1):
-                        name = str(ws.cell(row=r, column=2).value)
-                        total = ws.cell(row=r, column=ws.max_column - 1).value
-                        percent = ws.cell(row=r, column=ws.max_column).value
-                        c.drawString(50, y, name[:30])
-                        c.drawString(300, y, str(total))
-                        c.drawString(400, y, f"{percent}%")
-                        y -= 15
-                        if y < 100:
-                            c.showPage()
-                            y = 780
-
-                    c.save()
-                    pdf_bytes.seek(0)
-                    st.download_button("⬇️ Download PDF Report", data=pdf_bytes, file_name=f"{class_name}_Final_Report.pdf", mime="application/pdf")
-
-    except Exception as e:
-        st.error(f"⚠️ Error: {e}")
+    pdf_data = generate_pdf(results_df)
+    st.download_button("⬇️ Download PDF Report", data=pdf_data, file_name=f"{subject}_Report.pdf", mime="application/pdf")
