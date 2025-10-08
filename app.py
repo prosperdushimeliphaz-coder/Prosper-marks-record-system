@@ -1,120 +1,86 @@
 import streamlit as st
 import pandas as pd
-import datetime
+from datetime import date
 from io import BytesIO
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, Border, Side
 
-# ---- PAGE SETUP ----
-st.set_page_config(page_title="Smart Assessment Report Generator", page_icon="📊", layout="centered")
+st.set_page_config(page_title="Marks Recorder", page_icon="🧮", layout="wide")
 
-st.title("📊 Smart Assessment Report Generator")
-st.write("Easily record marks and automatically generate a final performance report.")
+st.title("📘 Student Marks Recorder")
+st.markdown("Enter marks for each student, then download the updated workbook with test details and totals.")
 
-# ---- SCHOOL INFO ----
-st.header("🏫 School & Class Information")
-col1, col2 = st.columns(2)
-with col1:
-    district = st.text_input("District")
-    school = st.text_input("School")
-    year = st.text_input("Academic Year", datetime.date.today().year)
-with col2:
-    sector = st.text_input("Sector")
-    class_group = st.text_input("Class", placeholder="e.g., S1A")
+# -----------------------------
+# File uploader
+# -----------------------------
+uploaded_file = st.file_uploader("📂 Upload the class Excel workbook", type=["xlsx"])
 
-# ---- UPLOAD STUDENT LIST ----
-st.subheader("📘 Upload Students List")
-uploaded_students = st.file_uploader("Upload Excel file containing student names (multi-sheet allowed)", type=["xlsx"])
+if uploaded_file is not None:
+    df = pd.read_excel(uploaded_file)
 
-if uploaded_students:
-    excel_file = pd.ExcelFile(uploaded_students)
-    sheet_names = excel_file.sheet_names
-    selected_sheet = st.selectbox("Select Class Group (from uploaded file)", sheet_names)
-    students_df = pd.read_excel(uploaded_students, sheet_name=selected_sheet)
+    # --- Detect the column for student names automatically ---
+    name_col = None
+    for possible in ["Names", "Name", "names", "Student Name", "student_name"]:
+        if possible in df.columns:
+            name_col = possible
+            break
 
-    # show preview
-    st.dataframe(students_df.head())
+    if not name_col:
+        st.error("❌ 'Name' column not found in your Excel file. Please ensure one column has student names.")
+        st.stop()
 
-    # ---- TEST SETTINGS ----
-    st.subheader("🧮 Test Information")
-    num_tests = st.number_input("Number of Tests", 1, 10, 5)
-    max_marks = st.number_input("Maximum Marks per Test", 1, 200, 100)
+    # --- Show detected column ---
+    st.success(f"✅ Using column **{name_col}** for student names.")
 
-    # ---- ENTER TEST DATES ----
-    st.markdown("### 🗓️ Enter Test Dates")
-    test_dates = []
-    cols = st.columns(num_tests)
-    for i in range(num_tests):
-        with cols[i]:
-            date = st.date_input(f"Test {i+1} Date", datetime.date.today())
-            test_dates.append(date)
+    # --- Let user select class or sheet ---
+    st.markdown("### 🧑‍🏫 Select Class or Section")
+    class_name = st.text_input("Enter class name (e.g. S1 Biology)", "")
 
-    # ---- ENTER SCORES ----
-    st.markdown("### ✏️ Enter Scores for Each Student")
-    scores = {}
-    for idx, row in students_df.iterrows():
-        name = row['Names']
-        with st.expander(f"{idx+1}. {name}"):
-            marks = []
-            cols2 = st.columns(num_tests)
-            for i in range(num_tests):
-                with cols2[i]:
-                    mark = st.number_input(f"Test {i+1}", 0.0, float(max_marks), 0.0, key=f"{name}_{i}")
-                    marks.append(mark)
-            scores[name] = marks
+    # --- Date for this record ---
+    record_date = st.date_input("📅 Date", date.today())
 
-    # ---- GENERATE REPORT ----
-    if st.button("📤 Generate Report"):
-        report = []
-        for name, marks in scores.items():
-            total = sum(marks)
-            percent = round((total / (num_tests * max_marks)) * 100, 2)
-            report.append([name] + marks + [total, f"{percent}%"])
+    # --- Input scores ---
+    st.markdown("## ✏️ Enter Scores for Each Student")
 
-        columns = ["Names"] + [f"Test {i+1} ({test_dates[i]})" for i in range(num_tests)] + ["Total", "Percentage"]
-        report_df = pd.DataFrame(report, columns=columns)
+    test_cols = ["Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
+    max_marks = st.number_input("Maximum marks per test", 1, 100, 20)
 
-        # ---- CREATE EXCEL FILE ----
-        output = BytesIO()
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Final Report"
+    # Create an empty dataframe to store marks
+    marks_data = {name_col: df[name_col].tolist()}
 
-        # School info
-        ws["A1"] = f"{school.upper()} - CLASS PERFORMANCE REPORT ({year})"
-        ws["A2"] = f"District: {district} | Sector: {sector} | Class: {class_group}"
-        ws["A1"].font = Font(bold=True, size=13)
-        ws["A2"].font = Font(italic=True, size=11)
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
-        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(columns))
+    for test in test_cols:
+        marks_data[test] = [0] * len(df)
 
-        # Header
-        for col_num, col_name in enumerate(columns, 1):
-            c = ws.cell(row=4, column=col_num, value=col_name)
-            c.font = Font(bold=True)
-            c.alignment = Alignment(horizontal="center", vertical="center")
+    marks_df = pd.DataFrame(marks_data)
 
-        # Data
-        for row_num, row_data in enumerate(report, 5):
-            for col_num, cell_value in enumerate(row_data, 1):
-                cell = ws.cell(row=row_num, column=col_num, value=cell_value)
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+    for i, row in df.iterrows():
+        name = row[name_col]
+        st.markdown(f"### 👤 {name}")
+        for test in test_cols:
+            marks_df.loc[i, test] = st.number_input(f"{test} score for {name}", 0, max_marks, 0, key=f"{name}_{test}")
 
-        # Borders
-        thin = Border(left=Side(style='thin'), right=Side(style='thin'),
-                      top=Side(style='thin'), bottom=Side(style='thin'))
-        for row in ws.iter_rows(min_row=4, max_row=4+len(report), min_col=1, max_col=len(columns)):
-            for cell in row:
-                cell.border = thin
+    # --- Compute totals and percentage ---
+    marks_df["Total (/Max)"] = marks_df[test_cols].sum(axis=1).astype(int).astype(str) + f" / {max_marks*5}"
+    marks_df["Total (/100)"] = round((marks_df[test_cols].sum(axis=1) / (max_marks * 5)) * 100, 2)
 
-        wb.save(output)
-        output.seek(0)
+    # --- Add class info and date ---
+    marks_df["Class"] = class_name
+    marks_df["Record Date"] = record_date
+    marks_df["Year"] = record_date.year
 
-        st.success("✅ Report generated successfully!")
+    st.markdown("### ✅ Preview of recorded marks")
+    st.dataframe(marks_df)
 
-        st.download_button(
-            label="⬇️ Download Excel Report",
-            data=output,
-            file_name=f"{class_group}_Final_Report_{year}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # --- Download updated Excel ---
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        marks_df.to_excel(writer, index=False, sheet_name="Marks")
+    processed_data = output.getvalue()
+
+    st.download_button(
+        label="📥 Download Updated Workbook",
+        data=processed_data,
+        file_name=f"{class_name}_marks_{record_date}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+else:
+    st.info("👆 Please upload a workbook to begin.")
